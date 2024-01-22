@@ -72,7 +72,7 @@ def taskflow(table, schema, conn_id):
 
 import_tickers = PythonOperator(
     python_callable=taskflow,
-    op_kwargs={"table": "tickers", "schema": "public", "conn_id": "dwh"},
+    op_kwargs={"table": "tickers", "schema": "landing", "conn_id": "dwh"},
     task_id="import_tickers",
     dag=dag,
 )
