@@ -15,3 +15,5 @@ apache-airflow-providers-openlineage==1.4.0
 apache-airflow-providers-postgres==5.10.0
 apache-airflow-providers-redis==3.6.0
 apache-airflow-providers-sqlite==3.7.0
+yfinance==0.2.36
+pytickersymbols==1.15.0

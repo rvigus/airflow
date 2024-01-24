@@ -1,5 +1,4 @@
 {{ config(materialized='view',
-   schema='staging',
-   alias='tickers'
+   schema='staging'
 ) }}
 select * from {{ source('landing', 'tickers') }}

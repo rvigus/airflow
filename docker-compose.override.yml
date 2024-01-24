@@ -1,0 +1,6 @@
+version: "3.4"
+services:
+  scheduler:
+    volumes:
+      - ./dbt:/usr/local/airflow/dbt:rw
+      - ./plugins:/usr/local/airflow/plugins:ro

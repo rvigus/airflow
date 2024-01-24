@@ -1,0 +1,6 @@
+yfinance==0.2.36
+pytickersymbols==1.15.0
+dbt-core==1.7.5
+dbt-extractor==0.5.1
+dbt-postgres==1.7.5
+dbt-semantic-interfaces==0.4.3

@@ -1,0 +1,18 @@
+mydbt:
+  target: production
+  outputs:
+    production:
+      type: postgres
+      host: dwh
+      user: admin
+      password: password
+      port: 5432
+      dbname: postgres
+      schema: public
+      threads: 1
+      keepalives_idle: 0
+      connect_timeout: 10
+
+# in prod we would template these and read them in from an airflow connection,
+# passing the values from the connection to the env variable in BashOperator.
+# "{{ env_var('DBT_PASSWORD') }}"

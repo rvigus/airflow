@@ -4,77 +4,100 @@ Imports FTSE 100 tickers
 
 import os
 import logging
-import requests
 import pandas as pd
 from datetime import datetime
-from bs4 import BeautifulSoup
+from concurrent.futures import ThreadPoolExecutor
+import yfinance as yf
+from pytickersymbols import PyTickerSymbols
 
-from airflow import DAG
-from airflow.operators.python import PythonOperator
+from airflow.decorators import dag, task
 from airflow.providers.postgres.hooks.postgres import PostgresHook
-
 
 DAG_NAME = "import__ftse_tickers"
 logger = logging.getLogger(DAG_NAME)
 
-dag = DAG(
+
+@dag(
     dag_id=DAG_NAME,
+    schedule="@hourly",
     start_date=datetime(2024, 1, 1),
-    schedule_interval="0 10 * * *",
     catchup=False,
     max_active_runs=1,
-    max_active_tasks=1
+    max_active_tasks=5,
+    doc_md=__doc__
 )
-dag.doc_md = __doc__
-
-def get_tickers():
-    """
-    Scrape available tickers on the FTSE100
-    """
-
-    logger.info("Fetching tickers")
-    url = "https://www.hl.co.uk/shares/stock-market-summary/ftse-100"
-    r = requests.get(url)
-    soup = BeautifulSoup(r.text, 'lxml')
-    rows = soup.find_all(id=lambda x: x and x.startswith("ls-row-"))
-
-    tickers = []
-
-    for row in rows:
-        ticker = row.findNext('td').text
-        tickers.append(ticker)
-
-    logger.info(f"Tickers: {tickers}")
-
-    return tickers
-
-def write_to_db(tickers, table, schema, conn_id):
-    """
-    Write tickers to postgres
-
-    """
-    hook = PostgresHook(postgres_conn_id=conn_id)
-    df = pd.DataFrame(tickers, columns=['Ticker'])
-    df.to_sql(
-        con=hook.get_sqlalchemy_engine(),
-        name=table,
-        schema=schema,
-        if_exists="replace",
-        index=False,
-    )
-    logger.info(f"Written to {schema}.{table}")
 
 
-def taskflow(table, schema, conn_id):
+def taskflow():
+
+    @task(task_id="get_tickers")
+    def get_tickers() -> list[str]:
+        pts = PyTickerSymbols()
+        return pts.get_ftse_100_london_yahoo_tickers()
+
+    @task(task_id="enrich_tickers")
+    def enrich_tickers(tickers: list[str]) -> list[dict]:
+        """
+        Enrich ticker information concurrently with a limited number of threads.
+        """
+        max_workers = 3
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            result_map = executor.map(enrich_ticker, tickers)
+            enriched_data = list(result_map)
+
+        return enriched_data
+
+    def enrich_ticker(ticker: str):
+        """
+        Enrich ticker information
+
+        """
+        try:
+            t = yf.Ticker(ticker)
+            info = t.get_info()
+            keys = ['country', 'industry', 'website', 'sector', 'marketCap', 'currency', 'exchange', 'symbol', 'shortName', 'longName']
+            result = {key.lower(): info.get(key) for key in keys}
+            result['ticker'] = ticker
+
+        except:
+            logger.info(f"Failed for: {ticker}")
+            result = {}
+
+        return result
+
+    @task(task_id="combine_to_dataframe")
+    def combine_to_dataframe(enriched_data: list[dict]) -> pd.DataFrame:
+        """
+        Combine JSON results into a single dataframe
+        """
+        dfs = [pd.DataFrame(data, index=[0]) for data in enriched_data if data]
+        combined = pd.concat(dfs, ignore_index=True)
+        return combined
+
+    @task(task_id="write_to_db")
+    def write_to_db(df, table, schema, conn_id):
+        """
+        Write tickers to postgres
+        """
+
+        hook = PostgresHook(postgres_conn_id=conn_id)
+        hook.run(sql=f"truncate {schema}.{table}", autocommit=True)
+
+        df.to_sql(
+            con=hook.get_sqlalchemy_engine(),
+            name=table,
+            schema=schema,
+            if_exists="append",
+            index=False,
+        )
+        logger.info(f"Written to {schema}.{table}")
+
+
     tickers = get_tickers()
-    write_to_db(tickers, table, schema, conn_id)
+    enriched_tickers = enrich_tickers(tickers)
+    df = combine_to_dataframe(enriched_tickers)
+    logger.info(df)
+    write_to_db(df=df, table="tickers", schema="landing", conn_id="dwh")
 
-
-import_tickers = PythonOperator(
-    python_callable=taskflow,
-    op_kwargs={"table": "tickers", "schema": "landing", "conn_id": "dwh"},
-    task_id="import_tickers",
-    dag=dag,
-)
-
+taskflow()
 
